@@ -65,6 +65,21 @@ builder.Services.ConfigureApplicationCookie(options =>
 var postgresConnectionString = GetPostgresConnectionString(builder.Configuration);
 var sqliteConnectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+
+if (!builder.Environment.IsDevelopment()
+    && string.IsNullOrWhiteSpace(postgresConnectionString)
+    && !builder.Configuration.GetValue<bool>("ALLOW_SQLITE_IN_PRODUCTION"))
+{
+    throw new InvalidOperationException("DATABASE_URL is required in Production.");
+}
+
+if (!builder.Environment.IsDevelopment()
+    && string.IsNullOrWhiteSpace(builder.Configuration["ADMIN_SETUP_CODE"])
+    && !builder.Configuration.GetValue<bool>("ALLOW_OPEN_ADMIN_SETUP"))
+{
+    throw new InvalidOperationException("ADMIN_SETUP_CODE is required in Production.");
+}
+
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     ConfigureDatabase(options, postgresConnectionString, sqliteConnectionString));
 builder.Services.AddDbContextFactory<ApplicationDbContext>(options =>

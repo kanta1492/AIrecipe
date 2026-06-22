@@ -53,6 +53,8 @@ RenderでGitHubリポジトリを接続し、BlueprintまたはDocker Web Servic
 - `UPLOADS_PATH`: `/var/data/uploads`
 - `ADMIN_SETUP_CODE`: 初回管理者登録に使う長いコード
 
+Productionでは `DATABASE_URL` と `ADMIN_SETUP_CODE` が必須です。設定漏れがある場合、アプリは起動せずにRenderログへエラーを出します。
+
 `scripts/Render-Env.sample.txt` に環境変数のサンプルがあります。
 
 Renderのデプロイが完了すると、`https://...onrender.com` の公開URLが発行されます。
