@@ -1,6 +1,7 @@
 ﻿@page "/Account/Register"
 
 @using System.ComponentModel.DataAnnotations
+@using System.Security.Cryptography
 @using System.Text
 @using System.Text.Encodings.Web
 @using Microsoft.AspNetCore.Identity
@@ -15,6 +16,7 @@
 @inject ILogger<Register> Logger
 @inject NavigationManager NavigationManager
 @inject IdentityRedirectManager RedirectManager
+@inject IConfiguration Configuration
 
 <PageTitle>アカウント登録</PageTitle>
 
@@ -46,6 +48,14 @@
                 <label for="Input.ConfirmPassword">パスワード確認</label>
                 <ValidationMessage For="() => Input.ConfirmPassword" class="text-danger" />
             </div>
+            @if (requiresAdminSetupCode)
+            {
+                <div class="form-floating">
+                    <InputText @bind-Value="Input.AdminSetupCode" id="Input.AdminSetupCode" class="form-control" autocomplete="one-time-code" aria-required="true" placeholder="admin-code" />
+                    <label for="Input.AdminSetupCode">管理者コード</label>
+                    <ValidationMessage For="() => Input.AdminSetupCode" class="text-danger" />
+                </div>
+            }
             <button type="submit" class="w-100 btn btn-lg btn-primary">登録する</button>
             <div class="auth-links">
                 <a href="Account/Login">ログインへ戻る</a>
@@ -56,6 +66,7 @@
 
 @code {
     private IEnumerable<IdentityError>? identityErrors;
+    private bool requiresAdminSetupCode;
 
     [SupplyParameterFromForm]
     private InputModel Input { get; set; } = default!;
@@ -65,15 +76,29 @@
 
     private string? Message => identityErrors is null ? null : $"Error: {string.Join(", ", identityErrors.Select(error => error.Description))}";
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         Input ??= new();
+        requiresAdminSetupCode = !await UserManager.Users.AnyAsync()
+            && !string.IsNullOrWhiteSpace(GetAdminSetupCode());
     }
 
     public async Task RegisterUser(EditContext editContext)
     {
         var user = CreateUser();
         var isFirstUser = !await UserManager.Users.AnyAsync();
+        var adminSetupCode = GetAdminSetupCode();
+
+        if (isFirstUser
+            && !string.IsNullOrWhiteSpace(adminSetupCode)
+            && !SecureEquals(Input.AdminSetupCode, adminSetupCode))
+        {
+            identityErrors =
+            [
+                new IdentityError { Description = "管理者コードが違います。" }
+            ];
+            return;
+        }
 
         await UserStore.SetUserNameAsync(user, Input.Email, CancellationToken.None);
         var emailStore = GetEmailStore();
@@ -133,6 +158,20 @@
         return (IUserEmailStore<ApplicationUser>)UserStore;
     }
 
+    private string? GetAdminSetupCode()
+    {
+        return Configuration["ADMIN_SETUP_CODE"]
+            ?? Configuration["Registration:AdminSetupCode"];
+    }
+
+    private static bool SecureEquals(string actual, string expected)
+    {
+        var actualBytes = Encoding.UTF8.GetBytes(actual);
+        var expectedBytes = Encoding.UTF8.GetBytes(expected);
+        return actualBytes.Length == expectedBytes.Length
+            && CryptographicOperations.FixedTimeEquals(actualBytes, expectedBytes);
+    }
+
     private sealed class InputModel
     {
         [Required]
@@ -150,5 +189,8 @@
         [Display(Name = "パスワード確認")]
         [Compare("Password", ErrorMessage = "パスワードと確認入力が一致しません。")]
         public string ConfirmPassword { get; set; } = "";
+
+        [StringLength(120)]
+        public string AdminSetupCode { get; set; } = "";
     }
 }

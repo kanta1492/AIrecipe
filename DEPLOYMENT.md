@@ -37,6 +37,7 @@ RenderでGitHubリポジトリを接続し、BlueprintまたはDocker Web Servic
 - `DATABASE_URL`: SupabaseのPostgreSQL接続文字列
 - `DATA_PROTECTION_KEYS_PATH`: `/var/data/keys`
 - `UPLOADS_PATH`: `/var/data/uploads`
+- `ADMIN_SETUP_CODE`: 初回管理者登録に使う長いコード
 
 `scripts/Render-Env.sample.txt` に環境変数のサンプルがあります。
 
@@ -44,4 +45,6 @@ Renderのデプロイが完了すると、`https://...onrender.com` の公開URL
 
 ## 4. 初回ログイン
 
-最初に登録したユーザーが管理者になります。管理者画面はログイン画面左上の隠し入口から入れます。
+初回登録時は `ADMIN_SETUP_CODE` が必要です。最初の管理者を登録した後、2人目以降は一般ユーザーとして登録されます。
+
+管理者画面はログイン画面左上の隠し入口から入れます。

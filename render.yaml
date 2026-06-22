@@ -14,3 +14,5 @@ services:
         value: /var/data/keys
       - key: UPLOADS_PATH
         value: /var/data/uploads
+      - key: ADMIN_SETUP_CODE
+        sync: false

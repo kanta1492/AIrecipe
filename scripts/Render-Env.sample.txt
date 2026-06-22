@@ -1,3 +1,4 @@
 DATABASE_URL=postgresql://postgres:<password>@<host>:5432/postgres
 DATA_PROTECTION_KEYS_PATH=/var/data/keys
 UPLOADS_PATH=/var/data/uploads
+ADMIN_SETUP_CODE=<set-a-long-random-code-before-first-deploy>
