@@ -1,0 +1,182 @@
+@page "/"
+@attribute [Authorize]
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject MealPlannerService Planner
+
+<PageTitle>ホーム - 献立ノート</PageTitle>
+
+<section class="screen-title">
+    <div>
+        <p class="eyebrow">Meal planner</p>
+        <h1>今日の冷蔵庫から献立へ</h1>
+    </div>
+    <a class="pill-action" href="suggest">提案する</a>
+</section>
+
+<section class="quick-grid" aria-label="クイック操作">
+    <a class="quick-tile" href="fridge">
+        <span class="tile-symbol">+</span>
+        <strong>食材登録</strong>
+        <small>手入力・写真</small>
+    </a>
+    <a class="quick-tile emphasis" href="suggest">
+        <span class="tile-symbol">◎</span>
+        <strong>AI献立</strong>
+        <small>献立候補</small>
+    </a>
+    <a class="quick-tile" href="history">
+        <span class="tile-symbol">≡</span>
+        <strong>記録</strong>
+        <small>過去の献立</small>
+    </a>
+</section>
+
+<section class="stat-grid">
+    <div class="metric">
+        <span>登録食材</span>
+        <strong>@itemCount</strong>
+    </div>
+    <div class="metric">
+        <span>期限間近</span>
+        <strong>@expiringCount</strong>
+    </div>
+    <div class="metric">
+        <span>未読通知</span>
+        <strong>@unreadCount</strong>
+    </div>
+</section>
+
+@if (todayPlan is not null)
+{
+    <section class="section-block highlight-band">
+        <div class="section-heading">
+            <h2>今日の記録</h2>
+            <a href="history">開く</a>
+        </div>
+        <article class="meal-card compact">
+            <p class="meal-meta">@todayPlan.MealType / @todayPlan.MealDate.ToString("yyyy/MM/dd")</p>
+            <h3>@todayPlan.Title</h3>
+            <p>@todayPlan.Reason</p>
+        </article>
+    </section>
+}
+
+<section class="section-block">
+    <div class="section-heading">
+        <h2>期限チェック</h2>
+        <a href="fridge">冷蔵庫へ</a>
+    </div>
+    @if (expiringItems.Count == 0)
+    {
+        <div class="empty-state">期限が近い食材はありません。</div>
+    }
+    else
+    {
+        <div class="list-stack">
+            @foreach (var item in expiringItems)
+            {
+                <div class="list-row">
+                    <div>
+                        <strong>@item.Name</strong>
+                        <small>@item.Category / @item.Quantity.ToString("0.##")@item.Unit</small>
+                    </div>
+                    <span class="@GetExpiryClass(item)">@GetExpiryLabel(item)</span>
+                </div>
+            }
+        </div>
+    }
+</section>
+
+<section class="section-block">
+    <div class="section-heading">
+        <h2>通知</h2>
+        <a href="notifications">すべて</a>
+    </div>
+    @if (notifications.Count == 0)
+    {
+        <div class="empty-state">新しい通知はありません。</div>
+    }
+    else
+    {
+        <div class="list-stack">
+            @foreach (var notification in notifications)
+            {
+                <a class="list-row link-row" href="@notification.ActionUrl">
+                    <div>
+                        <strong>@notification.Title</strong>
+                        <small>@notification.Message</small>
+                    </div>
+                    <span class="badge-soft">@notification.Kind</span>
+                </a>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    [CascadingParameter]
+    private Task<AuthenticationState> AuthenticationStateTask { get; set; } = default!;
+
+    private int itemCount;
+    private int expiringCount;
+    private int unreadCount;
+    private MealPlan? todayPlan;
+    private List<FridgeItem> expiringItems = [];
+    private List<AppNotification> notifications = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var userId = (await AuthenticationStateTask).User.GetRequiredUserId();
+        await Planner.RefreshExpiryNotificationsAsync(userId);
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var soon = today.AddDays(2);
+
+        itemCount = await db.FridgeItems.CountAsync(item => item.UserId == userId);
+        expiringCount = await db.FridgeItems.CountAsync(item => item.UserId == userId && item.ExpirationDate != null && item.ExpirationDate <= soon);
+        unreadCount = await db.AppNotifications.CountAsync(notification => notification.UserId == userId && notification.ReadAt == null);
+        todayPlan = await db.MealPlans
+            .Where(plan => plan.UserId == userId && plan.MealDate == today)
+            .OrderByDescending(plan => plan.CreatedAt)
+            .FirstOrDefaultAsync();
+        expiringItems = await db.FridgeItems
+            .Where(item => item.UserId == userId && item.ExpirationDate != null && item.ExpirationDate <= soon)
+            .OrderBy(item => item.ExpirationDate)
+            .Take(4)
+            .ToListAsync();
+        notifications = await db.AppNotifications
+            .Where(notification => notification.UserId == userId && notification.ReadAt == null)
+            .OrderByDescending(notification => notification.CreatedAt)
+            .Take(3)
+            .ToListAsync();
+    }
+
+    private static string GetExpiryLabel(FridgeItem item)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        if (item.ExpirationDate is null)
+        {
+            return "未設定";
+        }
+
+        var diff = item.ExpirationDate.Value.DayNumber - today.DayNumber;
+        return diff switch
+        {
+            < 0 => "期限切れ",
+            0 => "今日まで",
+            1 => "明日まで",
+            _ => $"{diff}日以内"
+        };
+    }
+
+    private static string GetExpiryClass(FridgeItem item)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        return item.ExpirationDate < today ? "status danger" : "status warning";
+    }
+}

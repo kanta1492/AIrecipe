@@ -1,0 +1,51 @@
+@inherits LayoutComponentBase
+
+@inject NavigationManager NavigationManager
+
+<div class="app-shell">
+    <header class="app-header">
+        <a class="brand" href="">
+            <span class="brand-mark" aria-hidden="true">AI</span>
+            <span>献立ノート</span>
+        </a>
+        <AuthorizeView>
+            <Authorized>
+                <div class="header-actions">
+                    <AuthorizeView Roles="@AppRoles.Admin" Context="adminContext">
+                        <a class="header-link" href="admin">管理</a>
+                    </AuthorizeView>
+                    <a class="header-link" href="Account/Manage">設定</a>
+                    <form action="Account/Logout" method="post">
+                        <AntiforgeryToken />
+                        <input type="hidden" name="ReturnUrl" value="@CurrentUrl" />
+                        <button type="submit" class="header-link button-link">ログアウト</button>
+                    </form>
+                </div>
+            </Authorized>
+            <NotAuthorized>
+                <div class="header-actions">
+                    <a class="header-link" href="Account/Login">ログイン</a>
+                    <a class="header-link accent" href="Account/Register">登録</a>
+                </div>
+            </NotAuthorized>
+        </AuthorizeView>
+    </header>
+
+    <main class="app-main">
+        <article class="content">
+            @Body
+        </article>
+    </main>
+
+    <NavMenu />
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    エラーが発生しました。
+    <a href="." class="reload">再読み込み</a>
+    <span class="dismiss">x</span>
+</div>
+
+@code {
+    private string CurrentUrl => NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+}

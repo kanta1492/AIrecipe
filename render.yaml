@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: ai-meal-planner
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: DATABASE_URL
+        sync: false
+      - key: DATA_PROTECTION_KEYS_PATH
+        value: /var/data/keys
+      - key: UPLOADS_PATH
+        value: /var/data/uploads

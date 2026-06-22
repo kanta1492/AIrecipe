@@ -1,0 +1,156 @@
+@page "/suggest"
+@attribute [Authorize]
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject MealPlannerService Planner
+@inject IJSRuntime JS
+
+<PageTitle>献立提案 - 献立ノート</PageTitle>
+
+<section class="screen-title">
+    <div>
+        <p class="eyebrow">Step 2</p>
+        <h1>AI献立を考える</h1>
+    </div>
+    <a class="pill-action" href="fridge">食材追加</a>
+</section>
+
+<section class="section-block">
+    <div class="section-heading">
+        <h2>条件</h2>
+    </div>
+    <div class="segmented" role="group" aria-label="食事タイプ">
+        @foreach (var type in MealTypes)
+        {
+            <button type="button" class="@(mealType == type ? "active" : "")" @onclick="() => SetMealType(type)">@type</button>
+        }
+    </div>
+    <div class="form-grid compact-grid">
+        <label>
+            <span>気分</span>
+            <InputSelect class="form-select" @bind-Value="mood">
+                <option>おまかせ</option>
+                <option>時短</option>
+                <option>節約</option>
+                <option>ヘルシー</option>
+            </InputSelect>
+        </label>
+        <label>
+            <span>人数</span>
+            <InputNumber class="form-control" @bind-Value="servingCount" min="1" max="8" />
+        </label>
+        <label>
+            <span>記録日</span>
+            <InputDate class="form-control" @bind-Value="targetDate" />
+        </label>
+    </div>
+    <button type="button" class="btn btn-primary w-100" @onclick="GenerateAsync">◎ 献立を提案</button>
+</section>
+
+@if (itemCount == 0)
+{
+    <section class="notice-box">
+        まだ食材が登録されていません。先に冷蔵庫へ食材を1つ以上追加すると、提案の精度が上がります。
+    </section>
+}
+
+@if (isLoading)
+{
+    <section class="section-block">
+        <div class="empty-state">献立を考えています...</div>
+    </section>
+}
+else if (suggestions.Count > 0)
+{
+    <section class="section-block">
+        <div class="section-heading">
+            <h2>候補</h2>
+            <span>@suggestions.Count 件</span>
+        </div>
+        <div class="meal-stack">
+            @for (var index = 0; index < suggestions.Count; index++)
+            {
+                var suggestion = suggestions[index];
+                <article class="meal-card">
+                    <div class="meal-card-head">
+                        <div>
+                            <p class="meal-meta">@suggestion.MealType / 一致度 @suggestion.Confidence%</p>
+                            <h3>@suggestion.Title</h3>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-primary" @onclick="() => SaveAsync(suggestion)">記録</button>
+                    </div>
+                    <p>@suggestion.Reason</p>
+                    <div class="chip-row">
+                        @foreach (var ingredient in suggestion.MatchedIngredients)
+                        {
+                            <span class="chip good">@ingredient</span>
+                        }
+                        @foreach (var ingredient in suggestion.MissingIngredients)
+                        {
+                            <span class="chip">@ingredient</span>
+                        }
+                    </div>
+                    <details>
+                        <summary>作り方とメモ</summary>
+                        <p>@suggestion.Steps</p>
+                        <p>@suggestion.NutritionNote</p>
+                    </details>
+                </article>
+            }
+        </div>
+    </section>
+}
+
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <p class="status-line fixed-status">@message</p>
+}
+
+@code {
+    private static readonly string[] MealTypes = ["おまかせ", "朝食", "昼食", "夕食"];
+
+    [CascadingParameter]
+    private Task<AuthenticationState> AuthenticationStateTask { get; set; } = default!;
+
+    private string userId = string.Empty;
+    private string mealType = "おまかせ";
+    private string mood = "おまかせ";
+    private int servingCount = 2;
+    private DateTime targetDate = DateTime.Today;
+    private int itemCount;
+    private bool isLoading;
+    private string message = string.Empty;
+    private List<RecipeSuggestion> suggestions = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        userId = (await AuthenticationStateTask).User.GetRequiredUserId();
+        await using var db = await DbFactory.CreateDbContextAsync();
+        itemCount = await db.FridgeItems.CountAsync(item => item.UserId == userId);
+        await GenerateAsync();
+    }
+
+    private async Task GenerateAsync()
+    {
+        isLoading = true;
+        message = string.Empty;
+        suggestions = (await Planner.BuildSuggestionsAsync(userId, mealType, mood, servingCount)).ToList();
+        isLoading = false;
+    }
+
+    private async Task SaveAsync(RecipeSuggestion suggestion)
+    {
+        var saved = await Planner.SaveMealPlanAsync(userId, suggestion, DateOnly.FromDateTime(targetDate));
+        message = $"「{saved.Title}」を記録しました。";
+        await JS.InvokeVoidAsync("mealNotify.show", "献立を記録しました", saved.Title);
+    }
+
+    private async Task SetMealType(string type)
+    {
+        mealType = type;
+        await GenerateAsync();
+    }
+}

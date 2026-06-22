@@ -1,0 +1,429 @@
+@page "/fridge"
+@attribute [Authorize]
+
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject MealPlannerService Planner
+@inject IWebHostEnvironment HostEnvironment
+@inject IConfiguration Configuration
+
+<PageTitle>冷蔵庫 - 献立ノート</PageTitle>
+
+<section class="screen-title">
+    <div>
+        <p class="eyebrow">Step 1</p>
+        <h1>冷蔵庫を登録</h1>
+    </div>
+    <a class="pill-action" href="suggest">献立へ</a>
+</section>
+
+<section class="section-block">
+    <div class="section-heading">
+        <h2>手入力</h2>
+    </div>
+    <EditForm Model="Input" OnValidSubmit="AddItemAsync" FormName="fridge-item" class="stack-form">
+        <DataAnnotationsValidator />
+        <ValidationSummary class="text-danger" />
+        <div class="form-grid">
+            <label>
+                <span>食材名</span>
+                <InputText class="form-control" @bind-Value="Input.Name" maxlength="40" placeholder="例: 鶏むね" />
+            </label>
+            <label>
+                <span>カテゴリ</span>
+                <InputSelect class="form-select" @bind-Value="Input.Category">
+                    @foreach (var category in Categories)
+                    {
+                        <option value="@category">@category</option>
+                    }
+                </InputSelect>
+            </label>
+            <label>
+                <span>数量</span>
+                <InputNumber class="form-control" @bind-Value="Input.Quantity" min="0" step="0.5" />
+            </label>
+            <label>
+                <span>単位</span>
+                <InputSelect class="form-select" @bind-Value="Input.Unit">
+                    @foreach (var unit in Units)
+                    {
+                        <option value="@unit">@unit</option>
+                    }
+                </InputSelect>
+            </label>
+            <label>
+                <span>期限</span>
+                <InputDate class="form-control" @bind-Value="Input.ExpirationDate" />
+            </label>
+            <label>
+                <span>メモ</span>
+                <InputText class="form-control" @bind-Value="Input.Memo" maxlength="120" placeholder="冷凍、半分など" />
+            </label>
+        </div>
+        <button type="submit" class="btn btn-primary w-100">+ 食材を追加</button>
+    </EditForm>
+</section>
+
+<section class="section-block">
+    <div class="section-heading">
+        <h2>写真で登録</h2>
+    </div>
+    <div class="photo-panel">
+        <InputFile OnChange="HandlePhotoAsync" accept="image/jpeg,image/png,image/webp" capture="environment" />
+        @if (!string.IsNullOrWhiteSpace(photoPreview))
+        {
+            <img class="photo-preview" src="@photoPreview" alt="アップロードした食材写真のプレビュー" />
+        }
+        <label>
+            <span>写真メモ</span>
+            <InputTextArea class="form-control" @bind-Value="PhotoNote" maxlength="500" placeholder="例: 卵、キャベツ、トマトが写っている" />
+        </label>
+        <label>
+            <span>登録する食材</span>
+            <InputTextArea class="form-control" @bind-Value="PhotoIngredientsText" maxlength="500" placeholder="卵、キャベツ、トマト" />
+        </label>
+        <div class="button-row">
+            <button type="button" class="btn btn-outline-secondary" @onclick="ExtractCandidates">候補抽出</button>
+            <button type="button" class="btn btn-primary" @onclick="SavePhotoAsync" disabled="@(selectedPhotoBytes is null)">写真と食材を保存</button>
+        </div>
+        @if (photoCandidates.Count > 0)
+        {
+            <div class="chip-row" aria-label="抽出候補">
+                @foreach (var candidate in photoCandidates)
+                {
+                    <span class="chip">@candidate</span>
+                }
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(photoMessage))
+        {
+            <p class="status-line">@photoMessage</p>
+        }
+    </div>
+</section>
+
+<section class="section-block">
+    <div class="section-heading">
+        <h2>登録済み</h2>
+        <span>@items.Count 件</span>
+    </div>
+    @if (items.Count == 0)
+    {
+        <div class="empty-state">まだ食材がありません。まず1つ登録してみてください。</div>
+    }
+    else
+    {
+        <div class="list-stack">
+            @foreach (var item in items)
+            {
+                <div class="list-row fridge-row">
+                    <div>
+                        <strong>@item.Name</strong>
+                        <small>@item.Category / @item.Quantity.ToString("0.##")@item.Unit @FormatExpiry(item)</small>
+                        @if (!string.IsNullOrWhiteSpace(item.Memo))
+                        {
+                            <small>@item.Memo</small>
+                        }
+                    </div>
+                    <button class="icon-button danger" title="削除" @onclick="() => DeleteItemAsync(item.Id)">×</button>
+                </div>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    private const long MaxPhotoBytes = 5 * 1024 * 1024;
+    private static readonly string[] Categories = ["肉", "魚", "野菜", "卵・乳", "主食", "加工品", "その他"];
+    private static readonly string[] Units = ["個", "本", "枚", "g", "パック", "袋", "束"];
+
+    [CascadingParameter]
+    private Task<AuthenticationState> AuthenticationStateTask { get; set; } = default!;
+
+    private string userId = string.Empty;
+    private FridgeItemInput Input { get; set; } = new();
+    private List<FridgeItem> items = [];
+    private byte[]? selectedPhotoBytes;
+    private string selectedPhotoContentType = string.Empty;
+    private string selectedPhotoOriginalName = string.Empty;
+    private string photoPreview = string.Empty;
+    private string PhotoNote { get; set; } = string.Empty;
+    private string PhotoIngredientsText { get; set; } = string.Empty;
+    private string photoMessage = string.Empty;
+    private List<string> photoCandidates = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        userId = (await AuthenticationStateTask).User.GetRequiredUserId();
+        await LoadItemsAsync();
+    }
+
+    private async Task LoadItemsAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        items = await db.FridgeItems
+            .Where(item => item.UserId == userId)
+            .OrderBy(item => item.ExpirationDate ?? DateOnly.MaxValue)
+            .ThenBy(item => item.Name)
+            .ToListAsync();
+    }
+
+    private async Task AddItemAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.FridgeItems.Add(new FridgeItem
+        {
+            UserId = userId,
+            Name = Input.Name.Trim(),
+            Category = Input.Category,
+            Quantity = Input.Quantity,
+            Unit = Input.Unit,
+            ExpirationDate = Input.ExpirationDate is null ? null : DateOnly.FromDateTime(Input.ExpirationDate.Value),
+            Memo = Input.Memo.Trim(),
+            Source = "manual"
+        });
+        await db.SaveChangesAsync();
+        Input = new();
+        await LoadItemsAsync();
+        await Planner.RefreshExpiryNotificationsAsync(userId);
+    }
+
+    private async Task DeleteItemAsync(int id)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var item = await db.FridgeItems.FirstOrDefaultAsync(row => row.Id == id && row.UserId == userId);
+        if (item is null)
+        {
+            return;
+        }
+
+        db.FridgeItems.Remove(item);
+        await db.SaveChangesAsync();
+        await LoadItemsAsync();
+    }
+
+    private async Task HandlePhotoAsync(InputFileChangeEventArgs args)
+    {
+        photoMessage = string.Empty;
+        photoPreview = string.Empty;
+        selectedPhotoBytes = null;
+
+        var file = args.File;
+        if (file.Size > MaxPhotoBytes)
+        {
+            photoMessage = "写真は5MB以下にしてください。";
+            return;
+        }
+
+        try
+        {
+            await using var stream = file.OpenReadStream(MaxPhotoBytes);
+            using var memory = new MemoryStream();
+            await stream.CopyToAsync(memory);
+            var bytes = memory.ToArray();
+            var detectedType = DetectImageContentType(bytes);
+            if (detectedType is null)
+            {
+                photoMessage = "JPEG、PNG、WebP の写真だけ登録できます。";
+                return;
+            }
+
+            selectedPhotoBytes = bytes;
+            selectedPhotoContentType = detectedType;
+            selectedPhotoOriginalName = Path.GetFileName(file.Name);
+            photoPreview = $"data:{detectedType};base64,{Convert.ToBase64String(bytes)}";
+            photoMessage = "写真を読み込みました。写っている食材を確認してください。";
+        }
+        catch (IOException)
+        {
+            photoMessage = "写真を読み込めませんでした。サイズを小さくして再度試してください。";
+        }
+    }
+
+    private void ExtractCandidates()
+    {
+        photoCandidates = Planner.ExtractIngredientCandidates($"{PhotoNote} {PhotoIngredientsText}").ToList();
+        if (photoCandidates.Count > 0)
+        {
+            PhotoIngredientsText = string.Join("、", photoCandidates);
+        }
+    }
+
+    private async Task SavePhotoAsync()
+    {
+        if (selectedPhotoBytes is null)
+        {
+            return;
+        }
+
+        ExtractCandidates();
+        var uploadsPath = Configuration["UPLOADS_PATH"]
+            ?? Path.Combine(HostEnvironment.ContentRootPath, "Data", "uploads");
+        var uploadRoot = Path.Combine(uploadsPath, SafeSegment(userId));
+        Directory.CreateDirectory(uploadRoot);
+
+        var extension = selectedPhotoContentType switch
+        {
+            "image/png" => ".png",
+            "image/webp" => ".webp",
+            _ => ".jpg"
+        };
+        var storedPath = Path.Combine(uploadRoot, $"{Guid.NewGuid():N}{extension}");
+        await File.WriteAllBytesAsync(storedPath, selectedPhotoBytes);
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.IngredientPhotos.Add(new IngredientPhoto
+        {
+            UserId = userId,
+            StoredPath = storedPath,
+            ContentType = selectedPhotoContentType,
+            OriginalFileName = selectedPhotoOriginalName,
+            Note = PhotoNote.Trim(),
+            ConfirmedIngredients = PhotoIngredientsText.Trim()
+        });
+
+        var existingNames = await db.FridgeItems
+            .Where(item => item.UserId == userId)
+            .Select(item => item.Name)
+            .ToListAsync();
+        var existingSet = existingNames.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var ingredient in photoCandidates)
+        {
+            if (existingSet.Contains(ingredient))
+            {
+                continue;
+            }
+
+            db.FridgeItems.Add(new FridgeItem
+            {
+                UserId = userId,
+                Name = ingredient,
+                Category = GuessCategory(ingredient),
+                Quantity = 1,
+                Unit = "個",
+                Source = "photo",
+                Memo = "写真登録"
+            });
+        }
+
+        db.AppNotifications.Add(new AppNotification
+        {
+            UserId = userId,
+            Title = "写真を保存しました",
+            Message = photoCandidates.Count == 0
+                ? "写真だけを記録しました。あとから食材を手入力できます。"
+                : $"{photoCandidates.Count}件の食材候補を冷蔵庫に追加しました。",
+            Kind = "success",
+            ActionUrl = "/fridge"
+        });
+
+        await db.SaveChangesAsync();
+        selectedPhotoBytes = null;
+        photoPreview = string.Empty;
+        PhotoNote = string.Empty;
+        PhotoIngredientsText = string.Empty;
+        photoCandidates = [];
+        photoMessage = "保存しました。";
+        await LoadItemsAsync();
+    }
+
+    private static string FormatExpiry(FridgeItem item)
+    {
+        return item.ExpirationDate is null ? "" : $"/ {item.ExpirationDate:yyyy/MM/dd}まで";
+    }
+
+    private static string? DetectImageContentType(byte[] bytes)
+    {
+        if (bytes.Length >= 4 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
+        {
+            return "image/jpeg";
+        }
+
+        if (bytes.Length >= 8
+            && bytes[0] == 0x89
+            && bytes[1] == 0x50
+            && bytes[2] == 0x4E
+            && bytes[3] == 0x47)
+        {
+            return "image/png";
+        }
+
+        if (bytes.Length >= 12
+            && bytes[0] == 0x52
+            && bytes[1] == 0x49
+            && bytes[2] == 0x46
+            && bytes[3] == 0x46
+            && bytes[8] == 0x57
+            && bytes[9] == 0x45
+            && bytes[10] == 0x42
+            && bytes[11] == 0x50)
+        {
+            return "image/webp";
+        }
+
+        return null;
+    }
+
+    private static string GuessCategory(string name)
+    {
+        if (ContainsAny(name, ["鶏", "豚", "牛", "肉", "ひき肉"]))
+        {
+            return "肉";
+        }
+
+        if (ContainsAny(name, ["鮭", "さば", "魚", "ツナ"]))
+        {
+            return "魚";
+        }
+
+        if (ContainsAny(name, ["卵", "牛乳", "チーズ", "ヨーグルト"]))
+        {
+            return "卵・乳";
+        }
+
+        if (ContainsAny(name, ["米", "うどん", "パスタ", "パン"]))
+        {
+            return "主食";
+        }
+
+        if (ContainsAny(name, ["キャベツ", "玉ねぎ", "にんじん", "トマト", "きゅうり", "なす", "ピーマン", "白菜", "小松菜", "ほうれん草", "きのこ", "もやし", "大根", "じゃがいも"]))
+        {
+            return "野菜";
+        }
+
+        return "その他";
+    }
+
+    private static bool ContainsAny(string value, IEnumerable<string> words)
+    {
+        return words.Any(word => value.Contains(word, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string SafeSegment(string value)
+    {
+        var safe = new string(value.Where(character => char.IsLetterOrDigit(character) || character is '-' or '_').ToArray());
+        return string.IsNullOrWhiteSpace(safe) ? "user" : safe[..Math.Min(safe.Length, 80)];
+    }
+
+    private sealed class FridgeItemInput
+    {
+        [Required(ErrorMessage = "食材名を入力してください。")]
+        [StringLength(40)]
+        public string Name { get; set; } = string.Empty;
+
+        public string Category { get; set; } = "野菜";
+
+        [Range(0.1, 999, ErrorMessage = "数量は0より大きくしてください。")]
+        public decimal Quantity { get; set; } = 1;
+
+        public string Unit { get; set; } = "個";
+
+        public DateTime? ExpirationDate { get; set; }
+
+        [StringLength(120)]
+        public string Memo { get; set; } = string.Empty;
+    }
+}

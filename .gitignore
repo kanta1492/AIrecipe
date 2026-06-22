@@ -1,0 +1,15 @@
+bin/
+obj/
+.vs/
+.vscode/
+*.user
+*.suo
+*.log
+
+Data/app.db
+Data/*.db
+Data/*.db-*
+Data/keys/
+Data/uploads/
+
+appsettings.Production.json

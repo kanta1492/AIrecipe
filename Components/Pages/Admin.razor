@@ -1,0 +1,158 @@
+@page "/admin"
+@attribute [Authorize(Roles = AppRoles.Admin)]
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject UserManager<ApplicationUser> UserManager
+
+<PageTitle>管理 - 献立ノート</PageTitle>
+
+<section class="screen-title">
+    <div>
+        <p class="eyebrow">Admin</p>
+        <h1>管理者画面</h1>
+    </div>
+    <a class="pill-action" href="">ホーム</a>
+</section>
+
+<section class="stat-grid">
+    <div class="metric">
+        <span>ユーザー</span>
+        <strong>@totalUsers</strong>
+    </div>
+    <div class="metric">
+        <span>食材</span>
+        <strong>@totalItems</strong>
+    </div>
+    <div class="metric">
+        <span>献立</span>
+        <strong>@totalPlans</strong>
+    </div>
+    <div class="metric">
+        <span>写真</span>
+        <strong>@totalPhotos</strong>
+    </div>
+</section>
+
+@if (!string.IsNullOrWhiteSpace(status))
+{
+    <p class="status-line">@status</p>
+}
+
+<section class="section-block">
+    <div class="section-heading">
+        <h2>ユーザー管理</h2>
+        <span>@users.Count 件</span>
+    </div>
+    <div class="list-stack">
+        @foreach (var row in users)
+        {
+            <div class="list-row admin-row">
+                <div>
+                    <strong>@row.Email</strong>
+                    <small>@string.Join(" / ", row.Roles)</small>
+                </div>
+                @if (row.Roles.Contains(AppRoles.Admin))
+                {
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => DemoteAsync(row.Id)">降格</button>
+                }
+                else
+                {
+                    <button type="button" class="btn btn-sm btn-primary" @onclick="() => PromoteAsync(row.Id)">管理者にする</button>
+                }
+            </div>
+        }
+    </div>
+</section>
+
+@code {
+    private int totalUsers;
+    private int totalItems;
+    private int totalPlans;
+    private int totalPhotos;
+    private string status = string.Empty;
+    private List<UserRow> users = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        totalUsers = await UserManager.Users.CountAsync();
+        totalItems = await db.FridgeItems.CountAsync();
+        totalPlans = await db.MealPlans.CountAsync();
+        totalPhotos = await db.IngredientPhotos.CountAsync();
+
+        users = [];
+        foreach (var user in await UserManager.Users.OrderBy(user => user.Email).ToListAsync())
+        {
+            users.Add(new UserRow(
+                user.Id,
+                user.Email ?? user.UserName ?? user.Id,
+                (await UserManager.GetRolesAsync(user)).OrderBy(role => role).ToArray()));
+        }
+    }
+
+    private async Task PromoteAsync(string id)
+    {
+        var user = await UserManager.FindByIdAsync(id);
+        if (user is null)
+        {
+            return;
+        }
+
+        if (!await UserManager.IsInRoleAsync(user, AppRoles.Admin))
+        {
+            await UserManager.AddToRoleAsync(user, AppRoles.Admin);
+        }
+
+        if (!await UserManager.IsInRoleAsync(user, AppRoles.User))
+        {
+            await UserManager.AddToRoleAsync(user, AppRoles.User);
+        }
+
+        status = "管理者に昇格しました。";
+        await LoadAsync();
+    }
+
+    private async Task DemoteAsync(string id)
+    {
+        var user = await UserManager.FindByIdAsync(id);
+        if (user is null)
+        {
+            return;
+        }
+
+        var adminCount = 0;
+        foreach (var candidate in await UserManager.Users.ToListAsync())
+        {
+            if (await UserManager.IsInRoleAsync(candidate, AppRoles.Admin))
+            {
+                adminCount++;
+            }
+        }
+
+        if (adminCount <= 1)
+        {
+            status = "最後の管理者は降格できません。";
+            return;
+        }
+
+        await UserManager.RemoveFromRoleAsync(user, AppRoles.Admin);
+        if (!await UserManager.IsInRoleAsync(user, AppRoles.User))
+        {
+            await UserManager.AddToRoleAsync(user, AppRoles.User);
+        }
+
+        status = "一般ユーザーに降格しました。";
+        await LoadAsync();
+    }
+
+    private sealed record UserRow(string Id, string Email, IReadOnlyList<string> Roles);
+}

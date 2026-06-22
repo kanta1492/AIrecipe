@@ -1,0 +1,139 @@
+@page "/history"
+@attribute [Authorize]
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+
+<PageTitle>記録 - 献立ノート</PageTitle>
+
+<section class="screen-title">
+    <div>
+        <p class="eyebrow">Step 3</p>
+        <h1>献立と写真の記録</h1>
+    </div>
+    <a class="pill-action" href="suggest">追加</a>
+</section>
+
+<section class="section-block">
+    <div class="section-heading">
+        <h2>献立履歴</h2>
+        <span>@plans.Count 件</span>
+    </div>
+    @if (plans.Count == 0)
+    {
+        <div class="empty-state">まだ献立記録がありません。</div>
+    }
+    else
+    {
+        <div class="meal-stack">
+            @foreach (var plan in plans)
+            {
+                <article class="meal-card compact">
+                    <div class="meal-card-head">
+                        <div>
+                            <p class="meal-meta">@plan.MealDate.ToString("yyyy/MM/dd") / @plan.MealType</p>
+                            <h3>@plan.Title</h3>
+                        </div>
+                        <div class="button-row tight">
+                            <button type="button" class="icon-button" title="お気に入り" @onclick="() => ToggleFavoriteAsync(plan.Id)">@(plan.IsFavorite ? "★" : "☆")</button>
+                            <button type="button" class="icon-button danger" title="削除" @onclick="() => DeletePlanAsync(plan.Id)">×</button>
+                        </div>
+                    </div>
+                    <p>@plan.Reason</p>
+                    <small>@plan.Ingredients</small>
+                    <details>
+                        <summary>作り方</summary>
+                        <p>@plan.Steps</p>
+                        <p>@plan.NutritionNote</p>
+                    </details>
+                </article>
+            }
+        </div>
+    }
+</section>
+
+<section class="section-block">
+    <div class="section-heading">
+        <h2>写真履歴</h2>
+        <span>@photos.Count 件</span>
+    </div>
+    @if (photos.Count == 0)
+    {
+        <div class="empty-state">写真登録の記録はまだありません。</div>
+    }
+    else
+    {
+        <div class="photo-grid">
+            @foreach (var photo in photos)
+            {
+                <article class="photo-card">
+                    <img src="@($"/private/photos/{photo.Id}")" alt="登録した食材写真" />
+                    <div>
+                        <strong>@photo.CreatedAt.LocalDateTime.ToString("yyyy/MM/dd HH:mm")</strong>
+                        <small>@photo.ConfirmedIngredients</small>
+                    </div>
+                </article>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    [CascadingParameter]
+    private Task<AuthenticationState> AuthenticationStateTask { get; set; } = default!;
+
+    private string userId = string.Empty;
+    private List<MealPlan> plans = [];
+    private List<IngredientPhoto> photos = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        userId = (await AuthenticationStateTask).User.GetRequiredUserId();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        plans = await db.MealPlans
+            .Where(plan => plan.UserId == userId)
+            .OrderByDescending(plan => plan.MealDate)
+            .ThenByDescending(plan => plan.CreatedAt)
+            .ToListAsync();
+        photos = await db.IngredientPhotos
+            .Where(photo => photo.UserId == userId)
+            .OrderByDescending(photo => photo.CreatedAt)
+            .Take(12)
+            .ToListAsync();
+    }
+
+    private async Task ToggleFavoriteAsync(int id)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var plan = await db.MealPlans.FirstOrDefaultAsync(row => row.Id == id && row.UserId == userId);
+        if (plan is null)
+        {
+            return;
+        }
+
+        plan.IsFavorite = !plan.IsFavorite;
+        await db.SaveChangesAsync();
+        await LoadAsync();
+    }
+
+    private async Task DeletePlanAsync(int id)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var plan = await db.MealPlans.FirstOrDefaultAsync(row => row.Id == id && row.UserId == userId);
+        if (plan is null)
+        {
+            return;
+        }
+
+        db.MealPlans.Remove(plan);
+        await db.SaveChangesAsync();
+        await LoadAsync();
+    }
+}

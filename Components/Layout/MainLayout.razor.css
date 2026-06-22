@@ -1,0 +1,139 @@
+.app-shell {
+    min-height: 100vh;
+    padding-bottom: calc(86px + env(safe-area-inset-bottom));
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.42), var(--page) 240px),
+        var(--page);
+}
+
+.app-header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+    min-height: 64px;
+    padding: 0.75rem max(1rem, env(safe-area-inset-left)) 0.75rem max(1rem, env(safe-area-inset-right));
+    border-bottom: 1px solid rgba(220, 228, 218, 0.86);
+    background: rgba(250, 252, 247, 0.94);
+    backdrop-filter: blur(16px);
+}
+
+.brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    min-width: 0;
+    color: var(--ink);
+    font-size: 1rem;
+    font-weight: 900;
+}
+
+.brand-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    color: #fff;
+    background: var(--green);
+    font-size: 0.82rem;
+    box-shadow: 0 8px 20px rgba(47, 125, 79, 0.22);
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.45rem;
+    min-width: 0;
+}
+
+.header-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 36px;
+    padding: 0.35rem 0.55rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--ink);
+    background: #fff;
+    font-size: 0.85rem;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.header-link.accent {
+    color: #fff;
+    border-color: var(--green);
+    background: var(--green);
+}
+
+.button-link {
+    cursor: pointer;
+}
+
+.header-actions form {
+    margin: 0;
+}
+
+.app-main {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 1rem;
+}
+
+#blazor-error-ui {
+    display: none;
+    position: fixed;
+    right: 1rem;
+    bottom: calc(92px + env(safe-area-inset-bottom));
+    left: 1rem;
+    z-index: 1000;
+    padding: 0.8rem 1rem;
+    border-radius: 8px;
+    color: #fff;
+    background: var(--danger);
+    box-shadow: var(--shadow);
+}
+
+#blazor-error-ui .reload {
+    color: #fff;
+    font-weight: 800;
+    text-decoration: underline;
+}
+
+#blazor-error-ui .dismiss {
+    float: right;
+    cursor: pointer;
+    font-weight: 900;
+}
+
+@media (max-width: 520px) {
+    .app-header {
+        padding-right: 0.7rem;
+        padding-left: 0.7rem;
+    }
+
+    .brand span:last-child {
+        display: none;
+    }
+
+    .header-actions {
+        gap: 0.3rem;
+    }
+
+    .header-link {
+        padding-right: 0.45rem;
+        padding-left: 0.45rem;
+        font-size: 0.8rem;
+    }
+
+    .app-main {
+        padding: 0.8rem;
+    }
+}

@@ -1,0 +1,126 @@
+@page "/notifications"
+@attribute [Authorize]
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject MealPlannerService Planner
+@inject IJSRuntime JS
+
+<PageTitle>通知 - 献立ノート</PageTitle>
+
+<section class="screen-title">
+    <div>
+        <p class="eyebrow">Alerts</p>
+        <h1>通知</h1>
+    </div>
+    <button type="button" class="pill-action as-button" @onclick="MarkAllReadAsync">既読</button>
+</section>
+
+<section class="section-block">
+    <div class="section-heading">
+        <h2>ブラウザ通知</h2>
+    </div>
+    <button type="button" class="btn btn-outline-secondary w-100" @onclick="RequestBrowserNotificationAsync">通知を許可</button>
+    @if (!string.IsNullOrWhiteSpace(browserMessage))
+    {
+        <p class="status-line">@browserMessage</p>
+    }
+</section>
+
+<section class="section-block">
+    <div class="section-heading">
+        <h2>アプリ内通知</h2>
+        <span>@notifications.Count 件</span>
+    </div>
+    @if (notifications.Count == 0)
+    {
+        <div class="empty-state">通知はありません。</div>
+    }
+    else
+    {
+        <div class="list-stack">
+            @foreach (var notification in notifications)
+            {
+                <div class="list-row notification-row @(notification.ReadAt is null ? "unread" : "")">
+                    <a href="@notification.ActionUrl">
+                        <strong>@notification.Title</strong>
+                        <small>@notification.Message</small>
+                        <small>@notification.CreatedAt.LocalDateTime.ToString("yyyy/MM/dd HH:mm")</small>
+                    </a>
+                    @if (notification.ReadAt is null)
+                    {
+                        <button type="button" class="icon-button" title="既読" @onclick="() => MarkReadAsync(notification.Id)">✓</button>
+                    }
+                </div>
+            }
+        </div>
+    }
+</section>
+
+@code {
+    [CascadingParameter]
+    private Task<AuthenticationState> AuthenticationStateTask { get; set; } = default!;
+
+    private string userId = string.Empty;
+    private string browserMessage = string.Empty;
+    private List<AppNotification> notifications = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        userId = (await AuthenticationStateTask).User.GetRequiredUserId();
+        await Planner.RefreshExpiryNotificationsAsync(userId);
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        notifications = await db.AppNotifications
+            .Where(notification => notification.UserId == userId)
+            .OrderBy(notification => notification.ReadAt != null)
+            .ThenByDescending(notification => notification.CreatedAt)
+            .Take(60)
+            .ToListAsync();
+    }
+
+    private async Task MarkReadAsync(int id)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var notification = await db.AppNotifications.FirstOrDefaultAsync(row => row.Id == id && row.UserId == userId);
+        if (notification is null)
+        {
+            return;
+        }
+
+        notification.ReadAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        await LoadAsync();
+    }
+
+    private async Task MarkAllReadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var unread = await db.AppNotifications
+            .Where(notification => notification.UserId == userId && notification.ReadAt == null)
+            .ToListAsync();
+        foreach (var notification in unread)
+        {
+            notification.ReadAt = DateTimeOffset.UtcNow;
+        }
+
+        await db.SaveChangesAsync();
+        await LoadAsync();
+    }
+
+    private async Task RequestBrowserNotificationAsync()
+    {
+        var granted = await JS.InvokeAsync<bool>("mealNotify.requestPermission");
+        browserMessage = granted ? "ブラウザ通知を許可しました。" : "ブラウザ通知は許可されませんでした。";
+        if (granted)
+        {
+            await JS.InvokeVoidAsync("mealNotify.show", "献立ノート", "通知の準備ができました。");
+        }
+    }
+}
